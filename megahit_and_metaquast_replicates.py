@@ -7,8 +7,11 @@ import subprocess
 import shutil
 import logging as log
 from pathlib import Path
-from technical_replicates import download_raw_sequences_of_replicate_pair
 
+# Import methods from metagoflow-data-products-ro-crate/utils
+PATH_TO_MGF_METHODS = "../metagoflow-data-products-ro-crate/utils"
+sys.path.append(PATH_TO_MGF_METHODS)
+from technical_replicates import download_raw_sequences_of_replicate_pair  # noqa: E402
 
 desc = """
 Run MEGAHIT and METAQUAST on a technical replicate pair combining the raw
@@ -47,13 +50,13 @@ def main(
     log.basicConfig(format="\t%(levelname)s: %(message)s", level=log_level)
 
     # Check for existance of software containers
-    megahit_sif = Path("megahit.sif")
+    megahit_sif = Path("sifs/megahit.sif")
     if not megahit_sif.exists():
-        log.error("Cannot find ./megahit.sif")
+        log.error("Cannot find ./sifs/megahit.sif")
         sys.exit()
-    quast_sif = Path("quast.sif")
+    quast_sif = Path("sifs/quast.sif")
     if not quast_sif.exists():
-        log.error("Cannot find ./quast.sif")
+        log.error("Cannot find ./sifs/quast.sif")
         sys.exit()
 
     if not isinstance(threads, int):
@@ -76,46 +79,41 @@ def main(
     r1_files.sort()
     r2_files = list(Path(data_directory, replica2).glob("*.fastq.gz"))
     r2_files.sort()
-    if not len(r1_files) == 2:
-        log.error(f"R1 files: {r1_files}")
-        sys.exit()
-    if not len(r2_files) == 2:
-        log.error(f"R2 files: {r2_files}")
-        sys.exit()
     for rep in [r1_files, r2_files]:
         log.debug(f"Found: {rep[0]}")
         log.debug(f"Found: {rep[1]}")
 
     # Ensure top-level megahit output dir exists
-    Path("megahit_output").mkdir(exist_ok=True)
+    Path("working/megahit_output").mkdir(parents=True, exist_ok=True)
     # Build megahit output path (do not created dir)
-    output_dir = Path("megahit_output", f"{replica1}-{replica2}-megahit")
+    megahit_output_dir = Path("megahit_output", f"{replica1}-{replica2}-megahit")
+    analysis_output_dir = Path("working", megahit_output_dir)
 
     # Run MEGAHIT
     cmd = (
-        f"apptainer run -B ./:/output megahit.sif "
-        f"megahit -o /output/{output_dir} "
+        f"apptainer run -B ./working:/output sifs/megahit.sif "
+        f"megahit -o /output/{megahit_output_dir} "
         f"--min-contig-len 500 --num-cpu-threads {threads} "
         f"-1 {r1_files[0]},{r2_files[0]} "
         f"-2 {r1_files[1]},{r2_files[1]}"
     )
-    log.info("Running MEGAHIT: {cmd}")
+    log.info(f"Running MEGAHIT: {cmd}")
     output = subprocess.run(cmd, shell=True, capture_output=True)
     if output.returncode != 0:
         raise RuntimeError(f"Apptainer command failed: {output.stderr.decode()}")
     else:
         log.info("MEGAHIT successfully completed")
     # MEGAHIT produces a lot of intermediate data which needs to be removed
-    old_data = Path(output_dir, "intermediate_contigs")
+    old_data = Path(analysis_output_dir, "intermediate_contigs")
     shutil.rmtree(old_data)
 
     # QUAST
     if run_quast:
         log.info("Running MetaQUAST...")
-        path_to_contigs = Path(output_dir, "final.contigs.fa")
-        path_to_mquast_output = Path(output_dir, "mquast")
+        path_to_contigs = Path("working", megahit_output_dir, "final.contigs.fa")
+        path_to_mquast_output = Path(analysis_output_dir, "mquast")
         cmd = (
-            "apptainer run ~/sifs/quast.sif metaquast.py --threads {threads}"
+            "apptainer run sifs/quast.sif metaquast.py --threads {threads}"
             f"--max-ref-number 0 {path_to_contigs} -o {path_to_mquast_output}"
         )
         output = subprocess.run(cmd, shell=True, capture_output=True)

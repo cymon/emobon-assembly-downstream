@@ -2,3 +2,9 @@ __pycache__
 working
 sifs
 
+# poetry
+.venv
+
+#Others
+*.swp
+.ruff_cache

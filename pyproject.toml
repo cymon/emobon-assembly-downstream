@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "emobon-assembly-downstream"
+version = "0.1.0"
+description = ""
+authors = ["Cymon J. Cox <cymon@ualg.pt>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pandas = "^3.0.1"
+
+
+[tool.poetry.group.dev.dependencies]
+black = {extras = ["jupyter"], version = "^26.1.0"}
+pre-commit = "^4.5.1"
+ruff = "^0.15.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -63,6 +63,18 @@ def main(
         log.erorr("Threads must be an interger")
         sys.exit()
 
+    # Ensure top-level megahit output dir exists
+    Path("working/megahit_output").mkdir(parents=True, exist_ok=True)
+
+    # Build megahit output path (do not created dir), check if exists and move
+    # on, do this before downloading data
+    megahit_output_dir = Path("megahit_output", f"{replica1}-{replica2}-megahit")
+    analysis_output_dir = Path("working", megahit_output_dir)
+    if analysis_output_dir.exists():
+        log.info(f"Found previous analysis at {megahit_output_dir}")
+        log.info("Skipping analysis...")
+        return
+
     # Create raw data download dir if necessary
     data_directory = Path(input_data_directory)
     data_directory.mkdir(parents=True, exist_ok=True)
@@ -82,12 +94,6 @@ def main(
     for rep in [r1_files, r2_files]:
         log.debug(f"Found: {rep[0]}")
         log.debug(f"Found: {rep[1]}")
-
-    # Ensure top-level megahit output dir exists
-    Path("working/megahit_output").mkdir(parents=True, exist_ok=True)
-    # Build megahit output path (do not created dir)
-    megahit_output_dir = Path("megahit_output", f"{replica1}-{replica2}-megahit")
-    analysis_output_dir = Path("working", megahit_output_dir)
 
     # Run MEGAHIT
     cmd = (
@@ -113,7 +119,7 @@ def main(
         path_to_contigs = Path("working", megahit_output_dir, "final.contigs.fa")
         path_to_mquast_output = Path(analysis_output_dir, "mquast")
         cmd = (
-            "apptainer run sifs/quast.sif metaquast.py --threads {threads}"
+            f"apptainer run sifs/quast.sif metaquast.py --threads {threads} "
             f"--max-ref-number 0 {path_to_contigs} -o {path_to_mquast_output}"
         )
         output = subprocess.run(cmd, shell=True, capture_output=True)

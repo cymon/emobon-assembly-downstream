@@ -26,10 +26,9 @@ desc = """
 Download all raw sequence data and analyse all technical replicate sample pairs
 for a EMO BON station/observatory
 
-a) run megahit and metaquast on each technical replicate
-b) run megahit and metaquast on all of the technical replicates for a station
-combined
-
+Default is to assemble each pair of technical replicates for a station
+separately. If all replicates for the station should be analysed together, set
+the "combined" flag.
 
 """
 
@@ -47,7 +46,7 @@ def main(
     station_name,
     env_package,
     sequence_data_directory,
-    combined,
+    combine,
     threads,
     debug,
 ):
@@ -138,24 +137,47 @@ def main(
         log.info(f"\t{count} {replicate}")
         count += 1
 
-    # Download raw sequence data for replicate pair
     data_directory = Path(sequence_data_directory)
     data_directory.mkdir(parents=True, exist_ok=True)
-    download_raw_data = True
     run_quast = True
-    for pair in replicates_with_rocrates:
+    if not combine:
+        # Assemble each pair separately
+        for pair in replicates_with_rocrates:
+            pair_list = []
+            pair_list.append(pair)
+            output_data_directory = f"{pair[0]}-{pair[1]}"
+            log.info(
+                f"Running assembly: {pair_list},"
+                f" data_directory={data_directory},"
+                f" output_directory={output_data_directory},"
+                f" run_quast={run_quast}, threads={threads},"
+                f" debug={debug}"
+            )
+            run_assembly(
+                pair_list,
+                data_directory,
+                output_data_directory,
+                run_quast,
+                threads,
+                debug,
+            )
+    else:
+        # Combine all pairs
+        pair_list = replicates_with_rocrates
+        output_data_directory = (
+            f"{station_name}_{len(replicates_with_rocrates)}_replicate_pairs_combined"
+        )
         log.info(
-            f"Running assembly: pair0={pair[0]}, pair1={pair[1]},"
+            f"Running assembly: {pair_list},"
             f" data_directory={data_directory},"
-            f" download_raw_data={download_raw_data},"
+            f" output_directory={output_data_directory},"
             f" run_quast={run_quast}, threads={threads},"
             f" debug={debug}"
         )
         run_assembly(
-            pair[0],
-            pair[1],
+            pair_list,
             data_directory,
-            download_raw_data,
+            output_data_directory,
             run_quast,
             threads,
             debug,
@@ -182,7 +204,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-c",
         "--combine",
-        help="Combine all technical replicates",
+        help="Combine all replicates pairs for a station. Default=False",
         action="store_true",
         default=False,
     )

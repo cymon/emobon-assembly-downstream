@@ -121,8 +121,11 @@ def main(
         for replicate_pair in data_paths_for_pairs
         for replicate in replicate_pair
     ]
-    forwards_param = ", ".join(forwards)
-    reverses_param = ", ".join(reverses)
+
+    assert len(forwards) == len(reverses), f"{len(forwards)} != {len(reverses)}"
+
+    forwards_param = ",".join(str(path) for path in forwards)
+    reverses_param = ",".join(str(path) for path in reverses)
     log.debug(f"forwards_param = {forwards_param}")
     log.debug(f"reverses_param = {reverses_param}")
 

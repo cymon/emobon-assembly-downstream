@@ -61,12 +61,18 @@ def main(
     log.basicConfig(format="\t%(levelname)s: %(message)s", level=log_level)
 
     observatory_abbreviated_names = _read_observatory_names()
+
     if station_name not in observatory_abbreviated_names:
-        log.error(
-            f"Observatory name ({station_name}) must be one of "
-            f"{', '.join(observatory_abbreviated_names)}"
-        )
-        sys.exit()
+        # Broken name in observatories.csv
+        if station_name == "IUIEilat1":
+            station_name = "IUIEilat"
+            log.info("Renaming to IUIEilat")
+        else:
+            log.error(
+                f"Observatory name ({station_name}) must be one of "
+                f"{', '.join(observatory_abbreviated_names)}"
+            )
+            sys.exit()
     if env_package not in ["filters", "sediments"]:
         log.error("environment must be one of either 'filters' or 'sediments'")
         sys.exit()
@@ -80,7 +86,7 @@ def main(
     log.info(f"{station_name} replicates {len(all_sample_replicates)}")
     count = 1
     for sample_replicate in all_sample_replicates:
-        log.info(f"\t{count} {sample_replicate}")
+        log.debug(f"\t{count} {sample_replicate}")
         count += 1
 
     # Get list of station/env_package ro-crates
@@ -133,14 +139,16 @@ def main(
     log.info(f"Sample replicates pairs with ro-crates {len(replicates_with_rocrates)}")
     count = 1
     for replicate in replicates_with_rocrates:
-        log.info(f"\t{count} {replicate}")
+        log.debug(f"\t{count} {replicate}")
         count += 1
 
     data_directory = Path(sequence_data_directory)
     data_directory.mkdir(parents=True, exist_ok=True)
+
     run_quast = True
     if not combine:
-        # Assemble each pair separately
+        # Assemble each pair of techinical replicates separately
+        # So all 4 (2xF,2xR) raw reads for a sample (2xtech replcates)
         for pair in replicates_with_rocrates:
             pair_list = []
             pair_list.append(pair)
@@ -152,7 +160,7 @@ def main(
                 f" run_quast={run_quast}, threads={threads},"
                 f" debug={debug}"
             )
-            run_assembly(
+            result = run_assembly(
                 pair_list,
                 data_directory,
                 output_data_directory,
@@ -161,7 +169,8 @@ def main(
                 debug,
             )
     else:
-        # Combine all pairs
+        # Combine all pairs of technical replicates
+        # This seems to require too much memory
         pair_list = replicates_with_rocrates
         output_data_directory = (
             f"{station_name}_{len(replicates_with_rocrates)}_replicate_pairs_combined"
@@ -173,7 +182,7 @@ def main(
             f" run_quast={run_quast}, threads={threads},"
             f" debug={debug}"
         )
-        run_assembly(
+        result = run_assembly(
             pair_list,
             data_directory,
             output_data_directory,
@@ -181,6 +190,10 @@ def main(
             threads,
             debug,
         )
+    if result:
+        log.info(f"Finished replicate: {sample_replicate}")
+    else:
+        log.info(f"Ignoring replicate: {sample_replicate}")
 
 
 if __name__ == "__main__":

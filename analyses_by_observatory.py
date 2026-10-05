@@ -46,6 +46,8 @@ def main(
     env_package,
     sequence_data_directory,
     combine,
+    run_quast,
+    do_mapping,
     threads,
     debug,
 ):
@@ -61,6 +63,7 @@ def main(
     log.basicConfig(format="\t%(levelname)s: %(message)s", level=log_level)
 
     observatory_abbreviated_names = _read_observatory_names()
+    # print(observatory_abbreviated_names)
 
     if station_name not in observatory_abbreviated_names:
         # Broken name in observatories.csv
@@ -117,6 +120,7 @@ def main(
 
     source_mat_ids_in_rocrates = [n[0] for n in filtered_station_ro_crates]
 
+    # Identify sequenced technical replicates
     replicates_with_rocrates = []
     for sample_replicate in all_sample_replicates:
         log.debug(f"Doing rep: {sample_replicate}")
@@ -142,10 +146,13 @@ def main(
         log.debug(f"\t{count} {replicate}")
         count += 1
 
-    data_directory = Path(sequence_data_directory)
-    data_directory.mkdir(parents=True, exist_ok=True)
+    # Default none, use local data
+    if sequence_data_directory:
+        data_directory = Path(sequence_data_directory)
+        data_directory.mkdir(parents=True, exist_ok=True)
+    else:
+        data_directory = None
 
-    run_quast = True
     if not combine:
         # Assemble each pair of techinical replicates separately
         # So all 4 (2xF,2xR) raw reads for a sample (2xtech replcates)
@@ -153,18 +160,20 @@ def main(
             pair_list = []
             pair_list.append(pair)
             output_data_directory = f"{pair[0]}-{pair[1]}"
+            log.info("============================================")
             log.info(
                 f"Running assembly: {pair_list},"
                 f" data_directory={data_directory},"
                 f" output_directory={output_data_directory},"
-                f" run_quast={run_quast}, threads={threads},"
-                f" debug={debug}"
+                f" run_quast={run_quast}, do_mapping={do_mapping}, "
+                f" threads={threads}, debug={debug}"
             )
             result = run_assembly(
                 pair_list,
                 data_directory,
                 output_data_directory,
                 run_quast,
+                do_mapping,
                 threads,
                 debug,
             )
@@ -179,21 +188,20 @@ def main(
             f"Running assembly: {pair_list},"
             f" data_directory={data_directory},"
             f" output_directory={output_data_directory},"
-            f" run_quast={run_quast}, threads={threads},"
-            f" debug={debug}"
+            f" run_quast={run_quast}, do_mapping={do_mapping}, "
+            f" threads={threads}, debug={debug}"
         )
         result = run_assembly(
             pair_list,
             data_directory,
             output_data_directory,
             run_quast,
+            do_mapping,
             threads,
             debug,
         )
     if result:
         log.info(f"Finished replicate: {sample_replicate}")
-    else:
-        log.info(f"Ignoring replicate: {sample_replicate}")
 
 
 if __name__ == "__main__":
@@ -210,13 +218,31 @@ if __name__ == "__main__":
         help=("EMO BON environment parameter: either 'filters' or 'sediment'"),
     )
     parser.add_argument(
-        "sequence_data_directory",
-        help=("Path to directory to store raw sequence data"),
+        "-s",
+        "--sequence_data_directory",
+        help=(
+            "Path to directory to store raw sequence data if downloading " "from remote"
+        ),
+        default=None,
     )
     parser.add_argument(
         "-c",
         "--combine",
         help="Combine all replicates pairs for a station. Default=False",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-q",
+        "--run_quast",
+        help="Run MetaQUAST on resulting contigs. Default: False",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-m",
+        "--do_bowtie2_mapping",
+        help="Run Bowtie2 mapping. Default: False",
         action="store_true",
         default=False,
     )
@@ -240,6 +266,8 @@ if __name__ == "__main__":
         args.env_package,
         args.sequence_data_directory,
         args.combine,
+        args.run_quast,
+        args.do_bowtie2_mapping,
         args.threads,
         args.debug,
     )

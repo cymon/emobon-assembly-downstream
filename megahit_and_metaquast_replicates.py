@@ -13,6 +13,10 @@ PATH_TO_MGF_METHODS = "../metagoflow-data-products-ro-crate/utils"
 sys.path.append(PATH_TO_MGF_METHODS)
 from technical_replicates import download_raw_sequences_of_replicate_pair  # noqa: E402
 
+# The path to local raw sequence data files if local, path is prefix to the
+# genoscope directory: www.genoscope/etc...
+LOCAL_DATA_PATH_PREFIX = Path("/usr/local/scratch/emo-bon-geneoscope-data")
+
 desc = """
 Run MEGAHIT and METAQUAST on a technical replicates combining the raw
 sequence data files, either as a pair or combined for all pairs
@@ -40,6 +44,7 @@ def main(
     input_data_directory,
     output_data_directory,
     run_quast,
+    do_mapping,
     threads,
     debug,
 ):
@@ -49,9 +54,10 @@ def main(
     Input parameters:
     technical_replicates    - List of tuples where each is a pair of
                               source_mat_ids from a technical replicate
-    input_data_directory    - directory for the raw sequence data
+    input_data_directory    - directory for the raw sequence data if downloading
+                              from remote
     output_data_directory   - where the assembly is saved
-    run_quast               - run metaquast analysis on resulting assembly
+    do_mapping              - run bowtie2 mapping
     threads                 - number of threads for both MEGAHIT and MetaQUAST
     debug                   - turn on debugging output
 
@@ -81,16 +87,18 @@ def main(
     # Ensure top-level megahit output dir exists
     Path("working/megahit_output").mkdir(parents=True, exist_ok=True)
 
-    # NB using direct paths to genoscope directory
-    # Create raw data download dir if necessary
-    # data_directory = Path(input_data_directory)
-    # data_directory.mkdir(parents=True, exist_ok=True)
-    log.info("Ignoring input data directory; going with direct data paths")
-
     # Download the raw data file sequences if necessary
     # justpaths works here because genoscope results are on the same machine
     justpaths = True
-    DATA_PATH_PREFIX = Path("/usr/local/scratch/emo-bon-geneoscope-data")
+    if justpaths:
+        # NB using direct paths to genoscope directory
+        # Create raw data download dir if necessary
+        # data_directory = Path(input_data_directory)
+        # data_directory.mkdir(parents=True, exist_ok=True)
+        log.info(f"Using local data files at {LOCAL_DATA_PATH_PREFIX}")
+    else:
+        log.info(f"Downloading remote raw data file to {input_data_directory}")
+
     data_paths_for_pairs = []
     for tech_rep in technical_replicates:
         data_paths = download_raw_sequences_of_replicate_pair(
@@ -104,13 +112,20 @@ def main(
                     return [prefix_paths(p, prefix) for p in paths]
                 return f"{prefix}/{paths}"
 
-            data_paths_for_pairs.append(prefix_paths(data_paths, DATA_PATH_PREFIX))
+            data_paths_for_pairs.append(
+                prefix_paths(data_paths, LOCAL_DATA_PATH_PREFIX)
+            )
         else:
             data_paths_for_pairs.append(data_paths)
 
-    for r in data_paths_for_pairs:
-        for p in r:
-            log.info(f"Data paths: {p}")
+    count = 1
+    for pair in data_paths_for_pairs:
+        for p in pair:
+            log.info(f"Data paths for replicate pair {count}:")
+            for f, r in p:
+                log.info(f"\tforward - {f}")
+                log.info(f"\treverse - {r}")
+        count += 1
 
     # Forward and reverse raw seq data files:
     # data_paths_for_pairs
@@ -133,28 +148,63 @@ def main(
 
     assert len(forwards) == len(reverses), f"{len(forwards)} != {len(reverses)}"
 
-    forwards_param = ",".join(str(path) for path in forwards)
-    reverses_param = ",".join(str(path) for path in reverses)
-    log.debug(f"forwards_param = {forwards_param}")
-    log.debug(f"reverses_param = {reverses_param}")
+    if input_data_directory:
+        # Using remote data
+        log.error(
+            "This is broken because of mounting the correct data directory"
+            "into the megahit container"
+        )
+        sys.exit()
+    else:
+        # Using local data
+        megahit_forwards_param = ",".join(
+            str(path.replace(str(LOCAL_DATA_PATH_PREFIX), "/data")) for path in forwards
+        )
+        megahit_reverses_param = ",".join(
+            str(path.replace(str(LOCAL_DATA_PATH_PREFIX), "/data")) for path in reverses
+        )
+        bowtie2_forwards_param = ",".join(str(path) for path in forwards)
+        bowtie2_reverses_param = ",".join(str(path) for path in reverses)
+        for r1, r2 in megahit_forwards_param:
+            log.debug(f"\tMEGAHIT rep1 forward: {r1}")
+            log.debug(f"\tMEGAHIT rep2 forward: {r2}")
+        for r1, r2 in megahit_reverses_param:
+            log.debug(f"\tMEGAHIT rep1 reverse: {r1}")
+            log.debug(f"\tMEGAHIT rep2 reverse: {r2}")
+        for r1, r2 in bowtie2_forwards_param:
+            log.debug(f"\tBOWTIE2 rep1 forward: {r1}")
+            log.debug(f"\tBOWTIE2 rep2 forward: {r2}")
+        for r1, r2 in bowtie2_reverses_param:
+            log.debug(f"\tBOWTIE2 rep1 reverse: {r1}")
+            log.debug(f"\tBOWTIE2 rep2 reverse: {r2}")
 
     # Build megahit output path (do not created dir)
     megahit_output_dir = Path("megahit_output", f"{output_data_directory}")
     analysis_output_dir = Path("working", megahit_output_dir)
-
-    # Check to see if assembly exists
-    path_to_contigs = Path(analysis_output_dir, "final.contigs.fa")
-    if path_to_contigs.exists():
-        log.info(f"MEGAHIT assembly found at {path_to_contigs} - skipping assembly")
+    if analysis_output_dir.exists():
+        # If output dir exists MEGAHIT assembly must be present
+        path_to_contigs = Path(analysis_output_dir, "final.contigs.fa")
+        if not path_to_contigs.exists():
+            log.error(
+                f"MEGAHIT output dir already exists at:"
+                f"{analysis_output_dir} but assembly is missing. "
+                "MEGAHIT refuses to write to an already existing output directory"
+            )
+            sys.exit()
+        else:
+            log.info(f"MEGAHIT assembly found at {path_to_contigs} - skipping assembly")
     else:
         # Run MEGAHIT
         cmd = (
-            f"apptainer run -B ./working:/output sifs/megahit.sif "
+            f"apptainer run "
+            f"-B ./working:/output "
+            f"-B /usr/local/scratch/emo-bon-geneoscope-data:/data "
+            f"sifs/megahit.sif "
             f"megahit -o /output/{megahit_output_dir} "
             f"--min-contig-len 500 --num-cpu-threads {threads} "
             f"--memory 100 "
-            f"-1 {forwards_param} "
-            f"-2 {reverses_param}"
+            f"-1 {megahit_forwards_param} "
+            f"-2 {megahit_reverses_param}"
         )
         log.info(f"Running MEGAHIT: {cmd}")
         output = subprocess.run(cmd, shell=True, capture_output=True)
@@ -188,43 +238,54 @@ def main(
             else:
                 log.info("MetaQUAST successfully completed")
     else:
-        log.info("MQUAST not requested to be run")
+        log.info("MetaQUAST not requested to be run")
 
-    # BOWTIE2
-    # Build an index and map reads
-    bowtie2_bam_result = f"{analysis_output_dir}/assembly.bam"
-    if Path(bowtie2_bam_result).exists():
-        log.info(f"Bowtie2 assembly found at {bowtie2_bam_result} - skipping Bowtie2")
-    else:
-        log.info("Building index with bowtie2-build...")
-        # Build the index
-        cmd1 = (
-            f"bowtie2-build {path_to_contigs} {path_to_contigs} "
-            f"> {analysis_output_dir}/bowtie2-build.log"
-        )
-        output = subprocess.run(cmd1, shell=True, capture_output=True)
-        if output.returncode != 0:
-            raise RuntimeError(
-                f"bowtie2-build command failed: {output.stderr.decode()}"
+    if do_mapping:
+        # BOWTIE2
+        # Build an index and map reads
+        bowtie2_build_result = Path(f"{analysis_output_dir}/final.contigs.fa.1.bt2")
+        if bowtie2_build_result.exists():
+            log.info(
+                f"Bowtie2 index found at {bowtie2_build_result} "
+                f"- skipping Bowtie2-build index building"
             )
         else:
-            log.info("bowtie2 indexing successfully completed")
-        # Do the mapping
-        log.info("Mapping reads with bowtie2...")
-        cmd2 = (
-            f"bowtie2 -x {path_to_contigs} "
-            f"-1 {forwards_param} "
-            f"-2 {reverses_param} "
-            f"--very-sensitive -p 8 2> {analysis_output_dir}/bowtie2.log "
-            f"| samtools sort -@ 8 -o {bowtie2_bam_result} -"
-        )
-        output = subprocess.run(cmd2, shell=True, capture_output=True)
-        if output.returncode != 0:
-            raise RuntimeError(
-                f"bowtie2 mapping command failed: {output.stderr.decode()}"
+            log.info("Building index with bowtie2-build...")
+            # Build the index
+            cmd1 = (
+                f"bowtie2-build {path_to_contigs} {path_to_contigs} "
+                f"> {analysis_output_dir}/bowtie2-build.log"
+            )
+            output = subprocess.run(cmd1, shell=True, capture_output=True)
+            if output.returncode != 0:
+                raise RuntimeError(
+                    f"bowtie2-build command failed: {output.stderr.decode()}"
+                )
+            else:
+                log.info("bowtie2 indexing successfully completed")
+        bowtie2_bam_result = Path(f"{analysis_output_dir}/assembly.bam")
+        if bowtie2_bam_result.exists():
+            log.info(
+                f"Bowtie2 assembly found at {bowtie2_bam_result} - skipping Bowtie2"
             )
         else:
-            log.info("bowtie2 mapping successfully completed")
+            # Do the mapping
+            log.info("Mapping reads with bowtie2...")
+            cmd2 = (
+                f"bowtie2 -x {path_to_contigs} "
+                f"-1 {bowtie2_forwards_param} "
+                f"-2 {bowtie2_reverses_param} "
+                f"--very-sensitive -p 8 2> {analysis_output_dir}/bowtie2.log "
+                f"| samtools sort -@ 8 -o {bowtie2_bam_result} -"
+            )
+            log.info(f"Running bowtie2: {cmd2}")
+            output = subprocess.run(cmd2, shell=True, capture_output=True)
+            if output.returncode != 0:
+                raise RuntimeError(
+                    f"bowtie2 mapping command failed: {output.stderr.decode()}"
+                )
+            else:
+                log.info("bowtie2 mapping successfully completed")
 
     return True
 
@@ -249,6 +310,7 @@ if __name__ == "__main__":
             "Name of data directory containing the raw sequence data.\n"
             "<data_directory>/<source_mat_id>/<raw_sequences files>"
         ),
+        default=None,
     )
     parser.add_argument(
         "output_data_directory",
@@ -261,6 +323,13 @@ if __name__ == "__main__":
         "-q",
         "--run_quast",
         help="Run MetaQUAST on resulting contigs. Default: False",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-m",
+        "--do_bowtie2_mapping",
+        help="Run Bowtie2 mapping. Default: False",
         action="store_true",
         default=False,
     )
@@ -296,6 +365,7 @@ if __name__ == "__main__":
         args.input_data_directory,
         args.output_data_directory,
         args.run_quast,
+        args.do_mapping,
         args.threads,
         args.debug,
     )

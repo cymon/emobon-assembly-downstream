@@ -1,180 +1,231 @@
 #!/usr/bin/env bash
 # summarise_technical_replicates.sh
-
-# Combined QC table per sample pair: BC (raw + filtered, normalised),
-# AR, MEGAHIT reads, solid k-mers, depth, discordant, concordant-0.
-# Skips silently any sample lacking a completed mapping (no assembly.bam).
 #
-# Expects RESULTS to be the output of test_technical_replicates.py with
-# 22 columns; BC values are taken from the combined (SSU+LSU) block:
-# col 16 con_suma, col 17 con_sumb, col 18 con_bc_raw, col 19 con_bc_filt
-
-# Field descriptions for summarise_technical_replicates.sh output
+# Combined QC table per replicate pair: Bray-Curtis (raw + filtered, library-size
+# normalised), assembly rate, MEGAHIT read/k-mer stats, depth index, mapping
+# diagnostics, and a rule-based flag.
 #
-# sample_pair:            Replicate pair identifier, e.g. EMOBON_BPNS_Wa_6-EMOBON_BPNS_Wa_7
+# Usage:
+#   summarise_technical_replicates.sh RESULTS.tsv [MEGAHIT_OUTDIR]
 #
-# --- Bray-Curtis metrics (from calculate_BrayCurtis_between_technical_replicates.py, library-size normalised) ---
-# BC_raw:                 Library-size-normalised Bray-Curtis dissimilarity on full
-#                         profiles (SSU+LSU combined). Healthy pairs cluster 0.03-0.11;
-#                         values >0.20 indicate genuine composition divergence
-#                         between replicates.
-# BC_filt:                BC restricted to lineages >0.01% abundance in BOTH replicates.
-#                         Should be <= BC_raw. If similar to BC_raw, the dissimilarity
-#                         is in the abundant core, not the rare tail.
-# con_suma:               Total marker counts (SSU+LSU) for replicate A (first member
-#                         of pair). Raw count before normalisation.
-# con_sumb:               Total marker counts (SSU+LSU) for replicate B (second member).
+#   RESULTS.tsv    output of the replicate-pair Bray-Curtis script, EXPECTED_COLS
+#                  (default 22) tab-separated columns, pair id in column 1.
+#                  BC values come from the combined SSU+LSU block:
+#                    col 16 con_suma, col 17 con_sumb, col 18 con_bc_raw, col 19 con_bc_filt
+#   MEGAHIT_OUTDIR defaults to $OUTDIR or working/megahit_output. One EMOBON_*/
+#                  subdirectory per pair containing: log, bowtie2.log, assembly.bam
 #
-# --- Depth balance diagnostic (computed in script) ---
-# depth_ratio:            Larger/smaller ratio of con_suma vs con_sumb. Values >1.5
-#                         flag library preparation imbalance (unequal merge rates,
-#                         extraction yield, sequencing load). NOT a composition metric;
-#                         the BC values above are already normalised against this.
+# Pairs without assembly.bam are skipped silently (mapping not started). Pairs with
+# incomplete/unparseable inputs are skipped with a WARN on stderr. A summary of
+# included/skipped counts is printed to stderr at the end.
 #
-# --- Assembly performance (from MEGAHIT log) ---
-# reads_M:                Total raw reads input to MEGAHIT (millions). Parsed from
-#                         the "X reads, Y max read length" header line.
-# solid_B:                Total solid edges (k-mers) in the assembly (billions).
-#                         From the "Total number of solid edges:" log line.
-# depth_x:                Estimated mean coverage = (reads x 131bp) / solid_edges.
-#                         The 131 assumes 150bp reads minus trimming. Low depth (<8x)
-#                         predicts low AR and high assembly complexity artefacts.
-# AR_pct:                 Assembly Rate = overall alignment rate (%) from bowtie2
-#                         mapping of raw reads back onto the assembly. High AR (>80%)
-#                         indicates good community recapture; low AR (<50%) suggests
-#                         undersampling of a complex community.
+# Tunable via environment: EXPECTED_COLS COL_SUMA COL_SUMB COL_BC_RAW COL_BC_FILT
+#   READ_LEN_EFF BC_OUTLIER BC_HEALTHY DEPTH_RATIO_MAX AR_LOW AR_OK
 #
-# --- Mapping diagnostics (from bowtie2.log) ---
-# discordant_rate_pct:    Discordant pairs as % of all pairs. Reflects insert-size tail
-#                         beyond the bowtie2 -X 500 default. Expected ~3-4%; values >5%
-#                         may indicate assembly mis-joins, chimeric contigs, or
-#                         short-insert contamination.
-# concordant_0_rate_pct:  Pairs with no concordant or discordant alignment (% of all
-#                         pairs). High rates (>40%) indicate reads from taxa not
-#                         captured in the assembly, or poor assembly overall.
+# Output columns
+#   sample_pair            Replicate pair identifier, e.g. EMOBON_BPNS_Wa_6-EMOBON_BPNS_Wa_7
+#   BC_raw                 Library-size-normalised Bray-Curtis dissimilarity, full profiles.
+#   BC_filt                BC restricted to lineages >0.01% abundance in BOTH replicates.
+#                          Normally <= BC_raw; if similar, divergence is in the abundant core.
+#   AR_pct                 Assembly rate: bowtie2 overall alignment rate (%) of raw reads
+#                          mapped back to the assembly.
+#   reads_M                Raw reads input to MEGAHIT (millions); summed over all read
+#                          libraries ("Lib N ...: X reads, Y max read length" lines).
+#   solid_B                Solid edges (k-mers), billions, from the LAST "Total number of
+#                          solid edges" line (i.e. the largest k in the k-list).
+#   depth_x                Depth INDEX = reads * READ_LEN_EFF / solid_edges. READ_LEN_EFF
+#                          defaults to 131 (150 bp reads less trimming) and is NOT derived
+#                          from the data. Solid edges are not genome size, so this is a
+#                          relative index for comparing samples, not true coverage.
+#   depth_ratio            Larger/smaller of con_suma and con_sumb. Flags library
+#                          imbalance; not a composition metric (BC is already normalised).
+#   discordant_rate_pct    Discordant pairs as % of all pairs. Expected ~3-4%.
+#   concordant_0_rate_pct  Pairs with NO concordant AND NO discordant alignment, % of all
+#                          pairs (taken from bowtie2's "aligned 0 times concordantly or
+#                          discordantly" line; falls back to conc0 - discordant).
+#   con_suma, con_sumb     Total marker counts (SSU+LSU) for replicate A / B.
+#   flag                   Comma-separated issues, or "healthy" / "review":
+#                            composition_outlier  BC_raw > BC_OUTLIER (0.20)
+#                            low_AR               AR_pct < AR_LOW (50)
+#                            depth_imbalanced     depth_ratio > DEPTH_RATIO_MAX (1.5)
+#                            healthy              none of the above, BC_raw < BC_HEALTHY
+#                                                 (0.11) and AR_pct >= AR_OK (75)
+#                            review               none of the above but not clearly healthy
 #
-# --- Interpretation guides ---
-# Healthy pair:           BC_raw < 0.11, depth_ratio < 1.4, AR_pct > 75
-# Depth-imbalanced but
-#   compositionally OK:   BC_raw < 0.11, depth_ratio > 1.5 (e.g. EMT21_Wa_31-32)
-# Composition outlier:    BC_raw > 0.20 regardless of depth_ratio
-#   (ESC68N_Wa_1-2, MBAL4_Wa_11-12, AAOT_Wa_41-42)
-# Assembly failure only:  Low AR_pct with normal BC (e.g. NRMCB_Wa_63-64);
-#                         retain unless AR too low for downstream analysis
-#
-# All BC values derive from the combined SSU+LSU marker profile.
-
-#Tier 1: Healthy pairs (the majority)
-#Cluster around 0.03–0.09. Examples:
-#
-#    BPNS_6-7: 0.0278 (best)
-#    AAOT_46-47: 0.0382 (collapsed from 0.1743)
-#    EMT21_36-37: 0.0356
-#    NRMCB_68-69: 0.0369
-#
-#Tier 2: Genuine composition outliers (remain elevated after normalisation)
-#ESC68N_Wa_1-2: 0.2740 (was 0.2669)
-#MBAL4_Wa_11-12: 0.2555 (was 0.2291)
-#AAOT_Wa_41-42: 0.2063 (was 0.2262)
+# Rows are sorted by depth_x, descending.
 
 set -euo pipefail
+export LC_ALL=C   # '.' decimal separator and numeric sort independent of user locale
 
-RESULTS="${1:?Usage: $0 bray_curtis_replicate_results.tsv}"
-OUTDIR="working/megahit_output"
+(( BASH_VERSINFO[0] >= 4 )) || { echo "ERROR: bash >= 4 required" >&2; exit 1; }
 
-[[ -f "$RESULTS" ]] || { echo "ERROR: results TSV not found: $RESULTS" >&2; exit 1; }
+RESULTS="${1:?Usage: $0 replicate_results.tsv [megahit_output_dir]}"
+OUTDIR="${2:-${OUTDIR:-working/megahit_output}}"
+
+EXPECTED_COLS="${EXPECTED_COLS:-22}"
+COL_SUMA="${COL_SUMA:-16}"
+COL_SUMB="${COL_SUMB:-17}"
+COL_BC_RAW="${COL_BC_RAW:-18}"
+COL_BC_FILT="${COL_BC_FILT:-19}"
+
+READ_LEN_EFF="${READ_LEN_EFF:-131}"
+BC_OUTLIER="${BC_OUTLIER:-0.20}"
+BC_HEALTHY="${BC_HEALTHY:-0.11}"
+DEPTH_RATIO_MAX="${DEPTH_RATIO_MAX:-1.5}"
+AR_LOW="${AR_LOW:-50}"
+AR_OK="${AR_OK:-75}"
+
+warn() { printf 'WARN: %s\n' "$*" >&2; }
+
+[[ -f "$RESULTS" ]] || { printf 'ERROR: results TSV not found: %s\n' "$RESULTS" >&2; exit 1; }
+[[ -d "$OUTDIR" ]]  || { printf 'ERROR: MEGAHIT output dir not found: %s\n' "$OUTDIR" >&2; exit 1; }
+
+shopt -s nullglob
+dirs=( "$OUTDIR"/EMOBON_*/ )
+(( ${#dirs[@]} )) || { printf 'ERROR: no EMOBON_*/ directories in %s\n' "$OUTDIR" >&2; exit 1; }
 
 tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
+lookup=$(mktemp)
+trap 'rm -f "$tmp" "$lookup"' EXIT
 
-for dir in "$OUTDIR"/EMOBON_*/; do
-  id=$(basename "$dir")
+# ---- Load and validate the BC table once ------------------------------------
+# Emits: id <TAB> bc_raw <TAB> bc_filt <TAB> suma <TAB> sumb
+# Rows with wrong column count, non-numeric values, non-positive counts or
+# duplicated ids are dropped with a warning. A non-numeric first row is treated
+# as a header and ignored silently.
+awk -F'\t' -v cols="$EXPECTED_COLS" -v ca="$COL_SUMA" -v cb="$COL_SUMB" \
+    -v cr="$COL_BC_RAW" -v cf="$COL_BC_FILT" '
+  function isnum(x) { return x ~ /^[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$/ }
+  { sub(/\r$/, "") }
+  NF == 0 { next }
+  NR == 1 && !isnum($cr) { next }                     # header
+  NF != cols {
+    printf "WARN: results row %d (%s) has %d columns, expected %d; skipping\n", NR, $1, NF, cols > "/dev/stderr"
+    next
+  }
+  {
+    id = $1
+    if (++seen[id] > 1) next
+    if (!isnum($cr) || !isnum($cf) || !isnum($ca) || !isnum($cb) || $ca + 0 <= 0 || $cb + 0 <= 0) {
+      printf "WARN: non-numeric or non-positive BC/count values for %s; skipping\n", id > "/dev/stderr"
+      bad[id] = 1; next
+    }
+    row[id] = $cr "\t" $cf "\t" $ca "\t" $cb
+  }
+  END {
+    for (id in seen) {
+      if (seen[id] > 1) {
+        printf "WARN: %s appears %d times in results; skipping\n", id, seen[id] > "/dev/stderr"
+      } else if (!(id in bad) && (id in row)) {
+        print id "\t" row[id]
+      }
+    }
+  }
+' "$RESULTS" > "$lookup"
+
+declare -A LOOKUP
+while IFS=$'\t' read -r id rest; do
+  LOOKUP["$id"]="$rest"
+done < "$lookup"
+
+# ---- Per-sample summary -----------------------------------------------------
+n_ok=0; n_unmapped=0; n_skipped=0
+
+for dir in "${dirs[@]}"; do
+  dir="${dir%/}"
+  id="${dir##*/}"
   log="$dir/log"
   bt2="$dir/bowtie2.log"
 
-  # Skip silently if mapping hasn't been done yet
-  [[ -f "$dir/assembly.bam" ]] || continue
-
-  # Hard errors only for unexpected inconsistencies:
-  # bam exists but its log is missing, or megahit log missing
-  if [[ ! -f "$bt2" ]]; then
-    echo "WARN: assembly.bam exists but no bowtie2.log for $id" >&2
-    continue
+  # Mapping not started: skip silently
+  if [[ ! -f "$dir/assembly.bam" ]]; then
+    n_unmapped=$((n_unmapped + 1)); continue
   fi
-  [[ -f "$log" ]] || { echo "WARN: no megahit log for $id" >&2; continue; }
+  if [[ ! -f "$bt2" ]]; then
+    warn "assembly.bam exists but no bowtie2.log for $id"
+    n_skipped=$((n_skipped + 1)); continue
+  fi
+  if [[ ! -f "$log" ]]; then
+    warn "no megahit log for $id"
+    n_skipped=$((n_skipped + 1)); continue
+  fi
+  if [[ -z "${LOOKUP[$id]:-}" ]]; then
+    warn "no valid BC row for $id in $RESULTS, skipping"
+    n_skipped=$((n_skipped + 1)); continue
+  fi
 
-  # Extract combined BC (proportion-normalised) and marker-count totals
-  # from the 22-column replicate-pair results.
-  bc_raw=$(awk -F'\t' -v id="$id" '$1==id {print $18}' "$RESULTS")
-  bc_filt=$(awk -F'\t' -v id="$id" '$1==id {print $19}' "$RESULTS")
-  suma=$(awk -F'\t' -v id="$id" '$1==id {print $16}' "$RESULTS")
-  sumb=$(awk -F'\t' -v id="$id" '$1==id {print $17}' "$RESULTS")
+  IFS=$'\t' read -r bc_raw bc_filt suma sumb <<< "${LOOKUP[$id]}"
 
-  # bc_raw is required; bc_filt/suma/sumb must be present if bc_raw is
-  [[ -n "${bc_raw:-}" ]] || { echo "WARN: no BC_raw value for $id, skipping" >&2; continue; }
-  [[ -n "${bc_filt:-}" && -n "${suma:-}" && -n "${sumb:-}" ]] || {
-    echo "WARN: incomplete BC row for $id, skipping" >&2; continue
-  }
-
-  awk -v id="$id" -v bc="$bc_raw" -v bcf="$bc_filt" \
-      -v suma="$suma" -v sumb="$sumb" -v bt2="$bt2" '
-    match($0, /[0-9]+ reads, [0-9]+ max read length/) {
-      reads = substr($0, RSTART, RLENGTH)
-      sub(/ reads.*/, "", reads)
+  # awk prints its row only in END, after every check has passed, so a failure
+  # here leaves nothing partial behind.
+  if ! row=$(awk -v id="$id" -v mlog="$log" \
+      -v bc="$bc_raw" -v bcf="$bc_filt" -v suma="$suma" -v sumb="$sumb" \
+      -v len="$READ_LEN_EFF" -v bc_out="$BC_OUTLIER" -v bc_ok="$BC_HEALTHY" \
+      -v dr_max="$DEPTH_RATIO_MAX" -v ar_low="$AR_LOW" -v ar_ok="$AR_OK" '
+    function fail(msg) {
+      printf "WARN: %s for %s\n", msg, id > "/dev/stderr"; failed = 1; exit 1
     }
-    /Total number of solid edges:/ {
-      m = $NF; gsub(/[^0-9]/, "", m); solid = m
+    { sub(/\r$/, "") }
+
+    # ---- MEGAHIT log ----
+    FILENAME == mlog {
+      if (match($0, /[0-9]+ reads, [0-9]+ max read length/)) {
+        s = substr($0, RSTART, RLENGTH); sub(/ reads.*/, "", s)
+        if ($0 ~ /Lib [0-9]+/) reads_lib += s; else reads_any = s + 0
+      }
+      if ($0 ~ /Total number of solid edges:/) {
+        e = $NF; gsub(/[^0-9]/, "", e); solid = e + 0      # keep last (largest k)
+      }
+      next
     }
+
+    # ---- bowtie2.log ----
+    {
+      sub(/^[ \t]+/, "")
+      if ($0 ~ /^[0-9]+ \([0-9.]+%\) were paired/)                total_pairs = $1 + 0
+      if ($0 ~ /^[0-9]+ \([0-9.]+%\) aligned concordantly 0 times/) conc0 = $1 + 0
+      if ($0 ~ /^[0-9]+ \([0-9.]+%\) aligned discordantly 1 time/)  disc = $1 + 0
+      if ($0 ~ /^[0-9]+ pairs aligned 0 times concordantly or discordantly/) { none = $1 + 0; have_none = 1 }
+      if ($0 ~ /overall alignment rate/) { pct = $1; gsub(/%/, "", pct); pct += 0; have_ar = 1 }
+    }
+
     END {
-      if (reads <= 0 || solid <= 0) {
-        printf "WARN: bad parse of %s\n", id > "/dev/stderr"; exit 1
-      }
-      depth = (reads * 131) / solid
+      if (failed) exit 1
+      reads = (reads_lib > 0) ? reads_lib : reads_any
+      if (reads <= 0 || solid <= 0) fail("could not parse read/solid-edge counts from MEGAHIT log")
+      if (total_pairs <= 0)         fail("no paired-read count in bowtie2.log (unpaired run or incomplete log)")
+      if (!have_ar)                 fail("no overall alignment rate in bowtie2.log (mapping incomplete?)")
 
-      # Parse bowtie2.log for concordant-0, discordant, and total pairs
-      total_pairs = 0
-      concordant_0_count = 0
-      discordant_count = 0
-      pct_align = ""
+      if (!have_none) { none = conc0 - disc; if (none < 0) none = 0 }
 
-      while ((getline line < bt2) > 0) {
-        sub(/^[ \t]+/, "", line)          # strip bowtie2 indentation
-        if (line ~ /^[0-9]+ \([0-9]+\.[0-9]+%\) were paired/)
-          total_pairs = line + 0
-        if (line ~ /^[0-9]+ \([0-9]+\.[0-9]+%\) aligned concordantly 0 times/)
-          concordant_0_count = line + 0
-        if (line ~ /^[0-9]+ \([0-9]+\.[0-9]+%\) aligned discordantly 1 time/)
-          discordant_count = line + 0
-        if (line ~ /overall alignment rate$/) {
-          split(line, a, " ")
-          pct_align = a[1]; gsub(/%/, "", pct_align)
-        }
-      }
-      close(bt2)
+      depth             = (reads * len) / solid
+      discordant_rate   = (disc / total_pairs) * 100
+      concordant_0_rate = (none / total_pairs) * 100
+      a = suma + 0; b = sumb + 0
+      depth_ratio = (a <= b) ? (b / a) : (a / b)
 
-      if (total_pairs <= 0) {
-        printf "WARN: no pair count in bowtie2.log for %s\n", id > "/dev/stderr"; exit 1
-      }
+      flag = ""
+      if (bc + 0 > bc_out + 0)       flag = flag (flag ? "," : "") "composition_outlier"
+      if (pct < ar_low + 0)          flag = flag (flag ? "," : "") "low_AR"
+      if (depth_ratio > dr_max + 0)  flag = flag (flag ? "," : "") "depth_imbalanced"
+      if (flag == "") flag = (bc + 0 < bc_ok + 0 && pct >= ar_ok + 0) ? "healthy" : "review"
 
-      discordant_rate = (discordant_count / total_pairs) * 100
-      concordant_0_rate = (concordant_0_count / total_pairs) * 100
-
-      if (pct_align == "") {
-        printf "WARN: no AR line in bowtie2.log for %s\n", id > "/dev/stderr"; exit 1
-      }
-
-      # Marker-count depth ratio between replicates (diagnostic for
-      # library-size imbalance; the BC itself is normalised)
-      depth_ratio = (suma <= sumb) ? (sumb / suma) : (suma / sumb)
-
-      printf "%s\t%s\t%s\t%.2f\t%.1f\t%.2f\t%.1f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\n", \
-        id, bc, bcf, pct_align, reads/1e6, solid/1e9, depth, \
-        depth_ratio, discordant_rate, concordant_0_rate, suma, sumb
+      printf "%s\t%s\t%s\t%.2f\t%.1f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%s\t%s\t%s\n", \
+        id, bc, bcf, pct, reads / 1e6, solid / 1e9, depth, \
+        depth_ratio, discordant_rate, concordant_0_rate, suma, sumb, flag
     }
-  ' "$log"
-done > "$tmp"
+  ' "$log" "$bt2"); then
+    n_skipped=$((n_skipped + 1)); continue
+  fi
+
+  printf '%s\n' "$row" >> "$tmp"
+  n_ok=$((n_ok + 1))
+done
 
 {
-  printf "sample_pair\tBC_raw\tBC_filt\tAR_pct\treads_M\tsolid_B\tdepth_x\tdepth_ratio\tdiscordant_rate_pct\tconcordant_0_rate_pct\tcon_suma\tcon_sumb\n"
+  printf "sample_pair\tBC_raw\tBC_filt\tAR_pct\treads_M\tsolid_B\tdepth_x\tdepth_ratio\tdiscordant_rate_pct\tconcordant_0_rate_pct\tcon_suma\tcon_sumb\tflag\n"
   sort -t$'\t' -k7,7gr "$tmp"
 }
+
+printf 'Summary: %d included, %d not yet mapped (no assembly.bam), %d skipped with warnings\n' \
+  "$n_ok" "$n_unmapped" "$n_skipped" >&2

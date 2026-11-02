@@ -258,49 +258,29 @@ def main(sample_replicate1, sample_replicate2):
             sys.exit()
 
 
-if __name__ == "__main__":
-    replicate_pairs = [
-        ["EMOBON_AAOT_Wa_1", "EMOBON_AAOT_Wa_2"],
-        ["EMOBON_AAOT_Wa_26", "EMOBON_AAOT_Wa_27"],
-        ["EMOBON_AAOT_Wa_41", "EMOBON_AAOT_Wa_42"],
-        ["EMOBON_AAOT_Wa_46", "EMOBON_AAOT_Wa_47"],
-        ["EMOBON_AAOT_Wa_61", "EMOBON_AAOT_Wa_62"],
-        ["EMOBON_AAOT_Wa_66", "EMOBON_AAOT_Wa_67"],
-        ["EMOBON_BPNS_Wa_1", "EMOBON_BPNS_Wa_2"],
-        ["EMOBON_BPNS_Wa_21", "EMOBON_BPNS_Wa_22"],
-        ["EMOBON_BPNS_Wa_26", "EMOBON_BPNS_Wa_27"],
-        ["EMOBON_BPNS_Wa_41", "EMOBON_BPNS_Wa_42"],
-        ["EMOBON_BPNS_Wa_46", "EMOBON_BPNS_Wa_47"],
-        ["EMOBON_BPNS_Wa_61", "EMOBON_BPNS_Wa_62"],
-        ["EMOBON_BPNS_Wa_66", "EMOBON_BPNS_Wa_67"],
-        ["EMOBON_BPNS_Wa_6", "EMOBON_BPNS_Wa_7"],
-        ["EMOBON_EMT21_Wa_16", "EMOBON_EMT21_Wa_17"],
-        ["EMOBON_EMT21_Wa_1", "EMOBON_EMT21_Wa_2"],
-        ["EMOBON_EMT21_Wa_21", "EMOBON_EMT21_Wa_22"],
-        ["EMOBON_EMT21_Wa_31", "EMOBON_EMT21_Wa_32"],
-        ["EMOBON_EMT21_Wa_36", "EMOBON_EMT21_Wa_37"],
-        ["EMOBON_EMT21_Wa_6", "EMOBON_EMT21_Wa_7"],
-        ["EMOBON_ESC68N_Wa_1", "EMOBON_ESC68N_Wa_2"],
-        ["EMOBON_ESC68N_Wa_3", "EMOBON_ESC68N_Wa_4"],
-        ["EMOBON_MBAL4_Wa_11", "EMOBON_MBAL4_Wa_12"],
-        ["EMOBON_MBAL4_Wa_13", "EMOBON_MBAL4_Wa_14"],
-        ["EMOBON_MBAL4_Wa_1", "EMOBON_MBAL4_Wa_2"],
-        ["EMOBON_MBAL4_Wa_3", "EMOBON_MBAL4_Wa_4"],
-        ["EMOBON_NRMCB_Wa_1", "EMOBON_NRMCB_Wa_2"],
-        ["EMOBON_NRMCB_Wa_23", "EMOBON_NRMCB_Wa_24"],
-        ["EMOBON_NRMCB_Wa_28", "EMOBON_NRMCB_Wa_29"],
-        ["EMOBON_NRMCB_Wa_43", "EMOBON_NRMCB_Wa_44"],
-        ["EMOBON_NRMCB_Wa_48", "EMOBON_NRMCB_Wa_49"],
-        ["EMOBON_NRMCB_Wa_63", "EMOBON_NRMCB_Wa_64"],
-        ["EMOBON_NRMCB_Wa_68", "EMOBON_NRMCB_Wa_69"],
-        ["EMOBON_RFormosa_Wa_11", "EMOBON_RFormosa_Wa_12"],
-        ["EMOBON_RFormosa_Wa_15", "EMOBON_RFormosa_Wa_16"],
-        ["EMOBON_RFormosa_Wa_1", "EMOBON_RFormosa_Wa_2"],
-        ["EMOBON_RFormosa_Wa_21", "EMOBON_RFormosa_Wa_22"],
-        ["EMOBON_RFormosa_Wa_25", "EMOBON_RFormosa_Wa_26"],
-        ["EMOBON_RFormosa_Wa_5", "EMOBON_RFormosa_Wa_6"],
-    ]
+def read_replicate_pairs(path_to_assemblies):
+    replicate_pairs = []
+    for d in Path(path_to_assemblies).iterdir():
+        if d.is_dir():
+            replicate_pairs.append(str(d.name).split("-"))
+    return replicate_pairs
 
+
+if __name__ == "__main__":
+    # replicate_pairs = [
+    #    ["EMOBON_AAOT_Wa_1", "EMOBON_AAOT_Wa_2"],
+    #    ["EMOBON_AAOT_Wa_26", "EMOBON_AAOT_Wa_27"],
+    #    ["EMOBON_AAOT_Wa_41", "EMOBON_AAOT_Wa_42"],
+    #    ["EMOBON_AAOT_Wa_46", "EMOBON_AAOT_Wa_47"],
+    #    ["EMOBON_AAOT_Wa_61", "EMOBON_AAOT_Wa_62"],
+    #    ["EMOBON_AAOT_Wa_66", "EMOBON_AAOT_Wa_67"],
+    # ]
+
+    # Read replicate pairs from assembly directory name:
+    replicate_pairs = read_replicate_pairs(path_to_assemblies="working/megahit_output")
+    # print(replicate_pairs)
+
+    # Header
     print(
         "replicate_pair\t"
         "ssu_suma\tssu_sumb\tssu_bc_raw\tssu_bc_filt\tssu_kept\tssu_rare\tssu_sing\t"

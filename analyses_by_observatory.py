@@ -22,12 +22,19 @@ OBSERVATORIES_LOGSHEET = (
 )
 
 desc = """
-Download all raw sequence data and analyse all technical replicate sample pairs
-for a EMO BON station/observatory
+Identify EMO BON Batch 1 & 2 sample technical replicate pairs from a single EMO
+BON station and feed them to the assembly script:
+megahit_and_metaquast_replicates.py
 
-Default is to assemble each pair of technical replicates for a station
-separately. If all replicates for the station should be analysed together, set
-the "combined" flag.
+Default is to run only MEGAHIT assembly on the combined technical replicate pair
+(so all 4, 2xforward, 2xreverse) raw reads files.
+
+Optionally, MetaQUAST quality assessment, Bowtie2 read mapping, and Prodigal
+gene prediction can also be run after assembly.
+
+Optionally, combine all technical replicates from a whole station.
+
+Optionally, download raw data files from remote server.
 
 """
 
@@ -48,6 +55,7 @@ def main(
     combine,
     run_quast,
     do_mapping,
+    do_gene_prediction,
     threads,
     debug,
 ):
@@ -156,6 +164,7 @@ def main(
     if not combine:
         # Assemble each pair of techinical replicates separately
         # So all 4 (2xF,2xR) raw reads for a sample (2xtech replcates)
+        # This is typically what you want
         for pair in replicates_with_rocrates:
             pair_list = []
             pair_list.append(pair)
@@ -174,6 +183,7 @@ def main(
                 output_data_directory,
                 run_quast,
                 do_mapping,
+                do_gene_prediction,
                 threads,
                 debug,
             )
@@ -181,6 +191,10 @@ def main(
         # Combine all pairs of technical replicates
         # This seems to require too much memory
         pair_list = replicates_with_rocrates
+        log.info(
+            "WARNING: you probably dont want to be doing this, combining"
+            "all raw data from a station likely requires >128GB data!"
+        )
         output_data_directory = (
             f"{station_name}_{len(replicates_with_rocrates)}_replicate_pairs_combined"
         )
@@ -197,6 +211,7 @@ def main(
             output_data_directory,
             run_quast,
             do_mapping,
+            do_gene_prediction,
             threads,
             debug,
         )
@@ -228,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-c",
         "--combine",
-        help="Combine all replicates pairs for a station. Default=False",
+        help="Combine ALL replicates pairs for a station. Default=False",
         action="store_true",
         default=False,
     )
@@ -243,6 +258,13 @@ if __name__ == "__main__":
         "-m",
         "--do_bowtie2_mapping",
         help="Run Bowtie2 mapping. Default: False",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-g",
+        "--do_gene_prediction",
+        help="Run Prodigal gene predicition: Default: False",
         action="store_true",
         default=False,
     )
@@ -268,6 +290,7 @@ if __name__ == "__main__":
         args.combine,
         args.run_quast,
         args.do_bowtie2_mapping,
+        args.do_gene_prediction,
         args.threads,
         args.debug,
     )

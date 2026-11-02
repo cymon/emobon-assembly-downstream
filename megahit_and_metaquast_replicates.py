@@ -45,6 +45,7 @@ def main(
     output_data_directory,
     run_quast,
     do_mapping,
+    do_gene_prediction,
     threads,
     debug,
 ):
@@ -57,7 +58,9 @@ def main(
     input_data_directory    - directory for the raw sequence data if downloading
                               from remote
     output_data_directory   - where the assembly is saved
+    run_quast               - run Metaquast
     do_mapping              - run bowtie2 mapping
+    do_gene_prediction      - run Prodigal
     threads                 - number of threads for both MEGAHIT and MetaQUAST
     debug                   - turn on debugging output
 
@@ -82,6 +85,17 @@ def main(
 
     if not isinstance(threads, int):
         log.error("Threads must be an interger")
+        sys.exit()
+
+    # Check for executables
+    if not shutil.which("bowtie2"):
+        log.error("Cannot find bowtie2 the environment")
+        sys.exit()
+    if not shutil.which("prodigal"):
+        log.error("Cannot find prodigal the environment")
+        sys.exit()
+    if not shutil.which("samtools"):
+        log.error("Cannot find samtools the environment")
         sys.exit()
 
     # Ensure top-level megahit output dir exists
@@ -122,9 +136,8 @@ def main(
     for pair in data_paths_for_pairs:
         for p in pair:
             log.info(f"Data paths for replicate pair {count}:")
-            for f, r in p:
-                log.info(f"\tforward - {f}")
-                log.info(f"\treverse - {r}")
+            log.info(f"\tforward - {p[0]}")
+            log.info(f"\treverse - {p[1]}")
         count += 1
 
     # Forward and reverse raw seq data files:
@@ -165,25 +178,25 @@ def main(
         )
         bowtie2_forwards_param = ",".join(str(path) for path in forwards)
         bowtie2_reverses_param = ",".join(str(path) for path in reverses)
-        for r1, r2 in megahit_forwards_param:
-            log.debug(f"\tMEGAHIT rep1 forward: {r1}")
-            log.debug(f"\tMEGAHIT rep2 forward: {r2}")
-        for r1, r2 in megahit_reverses_param:
-            log.debug(f"\tMEGAHIT rep1 reverse: {r1}")
-            log.debug(f"\tMEGAHIT rep2 reverse: {r2}")
-        for r1, r2 in bowtie2_forwards_param:
-            log.debug(f"\tBOWTIE2 rep1 forward: {r1}")
-            log.debug(f"\tBOWTIE2 rep2 forward: {r2}")
-        for r1, r2 in bowtie2_reverses_param:
-            log.debug(f"\tBOWTIE2 rep1 reverse: {r1}")
-            log.debug(f"\tBOWTIE2 rep2 reverse: {r2}")
+        # for r1, r2 in megahit_forwards_param:
+        #    log.debug(f"\tMEGAHIT rep1 forward: {r1}")
+        #    log.debug(f"\tMEGAHIT rep2 forward: {r2}")
+        # for r1, r2 in megahit_reverses_param:
+        #    log.debug(f"\tMEGAHIT rep1 reverse: {r1}")
+        #    log.debug(f"\tMEGAHIT rep2 reverse: {r2}")
+        # for r1, r2 in bowtie2_forwards_param:
+        #    log.debug(f"\tBOWTIE2 rep1 forward: {r1}")
+        #    log.debug(f"\tBOWTIE2 rep2 forward: {r2}")
+        # for r1, r2 in bowtie2_reverses_param:
+        #    log.debug(f"\tBOWTIE2 rep1 reverse: {r1}")
+        #    log.debug(f"\tBOWTIE2 rep2 reverse: {r2}")
 
     # Build megahit output path (do not created dir)
     megahit_output_dir = Path("megahit_output", f"{output_data_directory}")
     analysis_output_dir = Path("working", megahit_output_dir)
+    path_to_contigs = Path(analysis_output_dir, "final.contigs.fa")
     if analysis_output_dir.exists():
         # If output dir exists MEGAHIT assembly must be present
-        path_to_contigs = Path(analysis_output_dir, "final.contigs.fa")
         if not path_to_contigs.exists():
             log.error(
                 f"MEGAHIT output dir already exists at:"
@@ -202,7 +215,7 @@ def main(
             f"sifs/megahit.sif "
             f"megahit -o /output/{megahit_output_dir} "
             f"--min-contig-len 500 --num-cpu-threads {threads} "
-            f"--memory 100 "
+            f"--memory 120 "
             f"-1 {megahit_forwards_param} "
             f"-2 {megahit_reverses_param}"
         )
@@ -217,7 +230,9 @@ def main(
         shutil.rmtree(old_data)
 
     # QUAST
-    if run_quast:
+    if not run_quast:
+        log.info("MetaQUAST not requested to be run")
+    else:
         path_to_mquast_output = Path(analysis_output_dir, "mquast")
         # Check to see if already present
         if Path(path_to_mquast_output, "report.txt").exists():
@@ -237,10 +252,10 @@ def main(
                 )
             else:
                 log.info("MetaQUAST successfully completed")
-    else:
-        log.info("MetaQUAST not requested to be run")
 
-    if do_mapping:
+    if not do_mapping:
+        log.info("Bowtie2 mapping not requested to be run")
+    else:
         # BOWTIE2
         # Build an index and map reads
         bowtie2_build_result = Path(f"{analysis_output_dir}/final.contigs.fa.1.bt2")
@@ -252,11 +267,11 @@ def main(
         else:
             log.info("Building index with bowtie2-build...")
             # Build the index
-            cmd1 = (
+            cmd = (
                 f"bowtie2-build {path_to_contigs} {path_to_contigs} "
                 f"> {analysis_output_dir}/bowtie2-build.log"
             )
-            output = subprocess.run(cmd1, shell=True, capture_output=True)
+            output = subprocess.run(cmd, shell=True, capture_output=True)
             if output.returncode != 0:
                 raise RuntimeError(
                     f"bowtie2-build command failed: {output.stderr.decode()}"
@@ -271,15 +286,15 @@ def main(
         else:
             # Do the mapping
             log.info("Mapping reads with bowtie2...")
-            cmd2 = (
+            cmd = (
                 f"bowtie2 -x {path_to_contigs} "
                 f"-1 {bowtie2_forwards_param} "
                 f"-2 {bowtie2_reverses_param} "
                 f"--very-sensitive -p 8 2> {analysis_output_dir}/bowtie2.log "
                 f"| samtools sort -@ 8 -o {bowtie2_bam_result} -"
             )
-            log.info(f"Running bowtie2: {cmd2}")
-            output = subprocess.run(cmd2, shell=True, capture_output=True)
+            log.info(f"Running bowtie2: {cmd}")
+            output = subprocess.run(cmd, shell=True, capture_output=True)
             if output.returncode != 0:
                 raise RuntimeError(
                     f"bowtie2 mapping command failed: {output.stderr.decode()}"
@@ -287,6 +302,41 @@ def main(
             else:
                 log.info("bowtie2 mapping successfully completed")
 
+        if not do_gene_prediction:
+            log.info("Prodigal gene prediction not requested to be run")
+        else:
+            prodigal_output = Path(f"{analysis_output_dir}/prodigal")
+            prodigal_result_test = Path(f"{prodigal_output}/annotations.gff")
+            if prodigal_result_test.exists():
+                log.info(
+                    f"Prodigal annotations found at {prodigal_result_test} "
+                    f"- skipping Prodigal gene predictions"
+                )
+            else:
+                Path(prodigal_output).mkdir(exist_ok=True)
+                contigs_path = Path(f"{analysis_output_dir}/final.contigs.fa")
+                gff_out = Path(f"{prodigal_output}/annotations.gff")
+                proteins_out = Path(f"{prodigal_output}/proteins.faa")
+                genes_out = Path(f"{prodigal_output}/genes.ffn")
+                logout = Path(f"{prodigal_output}/log")
+                # Run prodigal
+                cmd = (
+                    f"prodigal -i {contigs_path} "
+                    f"-p meta "
+                    f"-f gff "
+                    f"-o {gff_out} "
+                    f"-a {proteins_out} "
+                    f"-d {genes_out} "
+                    f"> {logout}"
+                )
+                log.info(f"Running Prodigal: {cmd}")
+                output = subprocess.run(cmd, shell=True, capture_output=True)
+                if output.returncode != 0:
+                    raise RuntimeError(
+                        f"Prodigal gene prediction command failed: {output.stderr.decode()}"
+                    )
+                else:
+                    log.info("Prodigal gene prediction successfully completed")
     return True
 
 
@@ -334,6 +384,13 @@ if __name__ == "__main__":
         default=False,
     )
     parser.add_argument(
+        "-g",
+        "--do_gene_prediction",
+        help="Run Prodigal gene predicition: Default: False",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
         "-t",
         "--threads",
         help="Number of threads. Default: 1",
@@ -366,6 +423,7 @@ if __name__ == "__main__":
         args.output_data_directory,
         args.run_quast,
         args.do_mapping,
+        args.do_gene_prediction,
         args.threads,
         args.debug,
     )

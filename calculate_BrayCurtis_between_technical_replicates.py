@@ -54,6 +54,7 @@ and bc_filt; that bug was corrected in the same revision.
 
 import os
 import sys
+import re
 import subprocess
 from pathlib import Path
 from scipy.spatial.distance import braycurtis
@@ -262,7 +263,8 @@ def read_replicate_pairs(path_to_assemblies):
     replicate_pairs = []
     for d in Path(path_to_assemblies).iterdir():
         if d.is_dir():
-            replicate_pairs.append(str(d.name).split("-"))
+            pair = re.split(r"-(?=EMOBON)", str(d.name))
+            replicate_pairs.append(pair)
     return replicate_pairs
 
 

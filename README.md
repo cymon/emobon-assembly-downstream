@@ -1,21 +1,22 @@
 # emobon-assembly-downstream
 
-Analyses of EMO BON data beyond the MetaGOflow analyses and RO-Crate building
+
+## Analyses of EMO BON data beyond the MetaGOflow analyses and RO-Crate building
+
 
 a) make assemblies and mappings
-    - `analyses_by_observatory.py` loop for
-      `megahit_and_metaquast_replicates.py`
-        runs `megahit` on all 4 raw reads files of technical reps
-        runs `mquast` (optional)
-        runs `bowtie2` mapping (optional)
-        runs `prodigal` gene prediction (optional) 
+- `analyses_by_observatory.py` loop for `megahit_and_metaquast_replicates.py`
+    * runs `megahit` on all 4 raw reads files of technical reps
+    * runs `mquast` (optional)
+    * runs `bowtie2` mapping (optional)
+    * runs `prodigal` gene prediction (optional) 
 
 b) test technical replicate
 
-    - `calculate_BrayCurtis_between_technical_replicates.py`
+- `calculate_BrayCurtis_between_technical_replicates.py`
        uses the MGF SSU and LSU taxonomies combined to calculate a BC metric
         between technical replicate 1 and 2
-    - `megahit_assembly_stats.sh`
+- `megahit_assembly_stats.sh`
        takes the table output from calculate_BrayCurtis...
        adds the Alignment Rate, solid Kmer value, read number, and k-mer depth
        from bowtie2 and megahit logs
@@ -66,13 +67,24 @@ Bray-Curtis can be high due to community complexity, which is why we need the as
                           discordantly" line; falls back to conc0 - discordant).
 -   *con_suma*, *con_sumb*     Total marker counts (SSU+LSU) for replicate A / B.
 -   *flag*                   Comma-separated issues, or "healthy" / "review":
-                            - composition_outlier  BC_raw > BC_OUTLIER (0.20)
-                            - low_AR               AR_pct < AR_LOW (50)
-                            - depth_imbalanced     depth_ratio > DEPTH_RATIO_MAX (1.5)
-                            - healthy              none of the above, BC_raw < BC_HEALTHY
-                                                 (0.11) and AR_pct >= AR_OK (75)
-                            - review               none of the above but not clearly healthy
+    * composition_outlier  BC_raw > BC_OUTLIER (0.20)
+    * low_AR               AR_pct < AR_LOW (50)
+    * depth_imbalanced     depth_ratio > DEPTH_RATIO_MAX (1.5)
+    * healthy              none of the above, BC_raw < BC_HEALTHY (0.11) and AR_pct >= AR_OK (75)
+    * review               none of the above but not clearly healthy
 
  Rows are sorted by depth_x, descending.
 
+---
+
+Shield: [![CC BY 4.0][cc-by-shield]][cc-by]
+
+This work is licensed under a
+[Creative Commons Attribution 4.0 International License][cc-by].
+
+[![CC BY 4.0][cc-by-image]][cc-by]
+
+[cc-by]: http://creativecommons.org/licenses/by/4.0/
+[cc-by-image]: https://i.creativecommons.org/l/by/4.0/88x31.png
+[cc-by-shield]: https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg
 
